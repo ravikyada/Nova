@@ -4,7 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Security Scanner</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script defer src="/static/script.js"></script>
     <script>
         function scanWebsite(event) {
             event.preventDefault();
@@ -16,6 +19,178 @@
             document.getElementById("sensitive-files").innerHTML = "";
             document.getElementById("live-logs").innerHTML = "";
             
+            document.getElementById("scan-results").classList.remove("hidden");
+
+            // Start real-time log fetching
+            const eventSource = new EventSource(`/logs?url=${encodeURIComponent(url)}`);
+            eventSource.onmessage = function (event) {
+                const log = document.createElement("p");
+                log.textContent = event.data;
+
+                // Append log to live logs
+                document.getElementById("live-logs").appendChild(log.cloneNode(true));
+
+                // Categorize logs based on their content
+                if (event.data.includes("Port")) {
+                    document.getElementById("open-ports").appendChild(log.cloneNode(true));
+                } else if (event.data.toLowerCase().includes("security header")) {
+                    document.getElementById("security-headers").appendChild(log.cloneNode(true));
+                } else if (
+                    event.data.toLowerCase().includes("sensitive file") ||
+                    event.data.toLowerCase().includes("checking sensitive files") ||
+                    event.data.toLowerCase().includes("checking database files") ||
+                    event.data.toLowerCase().includes("checking wordpress files") ||
+                    event.data.toLowerCase().includes("checking node.js files") ||
+                    event.data.toLowerCase().includes("checking common vulnerability files") ||
+                    event.data.toLowerCase().includes("not accessible")
+                ) {
+                    document.getElementById("sensitive-files").appendChild(log.cloneNode(true));
+                }
+
+                // Highlight status for the logs
+                if (event.data.includes("❌")) {
+                    log.className = "text-red-600 font-bold";
+                } else if (event.data.includes("✅")) {
+                    log.className = "text-green-600";
+                } else {
+                    log.className = "text-blue-500";
+                }
+
+                log.scrollIntoView({ behavior: "smooth" });
+
+                // Close SSE when scan completes
+                if (event.data.includes("🔴 Scan complete, closing connection.")) {
+                    eventSource.close();
+                }
+            };
+
+            eventSource.onerror = function () {
+                console.error("❌ SSE connection failed.");
+                const errorLog = document.createElement("p");
+                errorLog.textContent = "❌ Error fetching logs. Please try again.";
+                errorLog.className = "text-red-600";
+                document.getElementById("live-logs").appendChild(errorLog);
+                eventSource.close();
+            };
+        }
+
+        function toggleSection(sectionId) {
+            var section = document.getElementById(sectionId);
+            section.classList.toggle("hidden");
+        }
+
+        function showDNSChecker() {
+            // Hide main content
+            document.getElementById("mainContent").classList.add("hidden");
+            // Show DNS checker
+            document.getElementById("dnsCheckerSection").classList.remove("hidden");
+        }
+
+        function showMainContent() {
+            // Show main content
+            document.getElementById("mainContent").classList.remove("hidden");
+            // Hide DNS checker
+            document.getElementById("dnsCheckerSection").classList.add("hidden");
+        }
+
+        document.addEventListener("DOMContentLoaded", function () {
+            document.getElementById("dnsForm").addEventListener("submit", function (event) {
+                event.preventDefault(); // Prevent page reload
+
+                let domain = document.getElementById("domain").value.trim();
+                let recordType = document.getElementById("recordType").value;
+                let resultsDiv = document.getElementById("dnsResults");
+
+                if (!domain) {
+                    resultsDiv.innerHTML = "<p class='text-red-500'>⚠️ Please enter a valid domain.</p>";
+                    return;
+                }
+
+                resultsDiv.innerHTML = "<p class='text-blue-500'>🔍 Checking DNS records...</p>";
+
+                fetch(`/dns-check?domain=${encodeURIComponent(domain)}&recordType=${recordType}`, {
+                    method: "GET",
+                    headers: { "Content-Type": "application/json" }
+                })
+                
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        resultsDiv.innerHTML = `<p class='text-red-500'>❌ Error: ${data.error}</p>`;
+                    } else {
+                        let output = `<h3 class='text-lg font-bold'>DNS Records for ${data.domain} (${data.recordType}):</h3>`;
+                        output += `<ul class='list-disc pl-4 text-green-500'>`;
+                        data.records.forEach(record => {
+                            output += `<li>${record}</li>`;
+                        });
+                        output += `</ul>`;
+                        resultsDiv.innerHTML = output;
+                        fetchLocationDetails(data.records[0], resultsDiv); // Fetch location for first DNS record (IP)
+                    }
+                })
+                .catch(error => {
+                    resultsDiv.innerHTML = "<p class='text-red-500'>❌ Error fetching DNS records.</p>";
+                    console.error("Error:", error);
+                });
+            });
+
+            // Automatically show the DNS Check section if the user visits the /dnscheck route
+            if (window.location.pathname === '/dnscheck') {
+                showDNSChecker();
+            }
+        });
+
+        // Function to fetch the location of the IP address
+        function fetchLocationDetails(ip, resultsDiv) {
+            resultsDiv.innerHTML += "<p class='text-blue-500'>🔍 Fetching server location...</p>";
+
+            fetch(`/location?ip=${encodeURIComponent(ip)}`, {
+                method: "GET",
+                headers: { "Content-Type": "application/json" }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    resultsDiv.innerHTML += `<p class='text-red-500'>❌ Error: ${data.error}</p>`;
+                } else {
+                    // Format the location details
+                    const location = data.location;
+                    const formattedLocation = `
+                        <ul>
+                            <li><strong>IP Address:</strong> ${location.ip}</li>
+                            <li><strong>Hostname:</strong> ${location.hostname}</li>
+                            <li><strong>City:</strong> ${location.city}</li>
+                            <li><strong>Region:</strong> ${location.region}</li>
+                            <li><strong>Country:</strong> ${location.country}</li>
+                            <li><strong>Location (Lat, Long):</strong> ${location.loc}</li>
+                            <li><strong>Organization:</strong> ${location.org}</li>
+                            <li><strong>Timezone:</strong> ${location.timezone}</li>
+                        </ul>
+                    `;
+                    resultsDiv.innerHTML += formattedLocation;
+                }
+            })
+            .catch(error => {
+                resultsDiv.innerHTML += "<p class='text-red-500'>❌ Error fetching server location.</p>";
+                console.error("Error:", error);
+            });
+        }
+
+        // Rescan function to fetch the same URL again
+        function rescan() {
+            const url = document.getElementById("url").value;
+            if (!url) {
+                alert("Please enter a URL to scan");
+                return;
+            }
+
+            // Clear previous scan results
+            document.getElementById("open-ports").innerHTML = "";
+            document.getElementById("security-headers").innerHTML = "";
+            document.getElementById("sensitive-files").innerHTML = "";
+            document.getElementById("live-logs").innerHTML = "";
+            
+            // Make sure scan-results section is visible
             document.getElementById("scan-results").classList.remove("hidden");
 
             // Start real-time log fetching
@@ -64,10 +239,6 @@
             };
         }
 
-        function toggleSection(sectionId) {
-            var section = document.getElementById(sectionId);
-            section.classList.toggle("hidden");
-        }
     </script>
 </head>
 <body class="bg-gray-100 font-sans">
@@ -76,46 +247,67 @@
         <div class="container mx-auto flex justify-between items-center">
             <a href="/" class="font-bold text-lg flex items-center">🔍 Security Scanner</a>
             <div class="space-x-6">
-                <a href="/" class="hover:underline">Home</a>
+                <a href="#" onclick="showMainContent()" class="hover:underline">Home</a>
                 <a href="/reports" class="hover:underline">Reports</a>
                 <a href="/about" class="hover:underline">About</a>
+                <a href="/dnscheck" class="hover:underline">DNS Check</a>
             </div>
         </div>
     </nav>
 
-    <!-- Main Content -->
-    <div class="container mx-auto mt-8">
+    <!-- DNS Checker -->
+    <div id="dnsCheckerSection" class="container mx-auto mt-8 hidden">
         <div class="bg-white shadow-lg p-6 rounded-lg">
-            <h1 class="text-3xl font-semibold mb-4">Scan a Target Website</h1>
-            <form onsubmit="scanWebsite(event)" class="flex space-x-4">
-                <input type="text" id="url" placeholder="Enter target URL (e.g., https://example.com)" required class="flex-1 p-2 border border-gray-300 rounded">
-                <button type="submit" class="bg-blue-600 text-white py-2 px-6 rounded-lg shadow-md hover:bg-blue-700">Scan</button>
+            <h2 class="text-3xl font-semibold mb-4">🔍 DNS Check</h2>
+            <form id="dnsForm" class="flex space-x-4">
+                <input type="text" id="domain" placeholder="Enter domain name (e.g., example.com)" required class="flex-1 p-2 border border-gray-300 rounded">
+                <select id="recordType" class="p-2 border border-gray-300 rounded">
+                    <option value="A">A</option>
+                    <option value="CNAME">CNAME</option>
+                </select>
+                <button type="submit" class="bg-blue-600 text-white py-2 px-6 rounded-lg shadow-md hover:bg-blue-700">Check DNS</button>
             </form>
+            <div id="dnsResults" class="mt-4"></div>
         </div>
     </div>
 
-    <!-- Live Logs Section -->
-    <div class="container mx-auto mt-8">
-        <div class="bg-white shadow-lg p-6 rounded-lg">
-            <h2 class="text-2xl font-semibold mb-2">📜 Live Scan Logs</h2>
-            <div id="live-logs" class="bg-gray-100 p-4 rounded max-h-64 overflow-auto border border-gray-300"></div>
+    <!-- Main Content -->
+    <div id="mainContent">
+        <div class="container mx-auto mt-8">
+            <!-- Scan a Target Website Form -->
+            <div class="bg-white shadow-lg p-6 rounded-lg">
+                <h1 class="text-3xl font-semibold mb-4">Scan a Target Website</h1>
+                <form onsubmit="scanWebsite(event)" class="flex space-x-4">
+                    <input type="text" id="url" placeholder="Enter target URL (e.g., https://example.com)" required class="flex-1 p-2 border border-gray-300 rounded">
+                    <button type="submit" class="bg-blue-600 text-white py-2 px-6 rounded-lg shadow-md hover:bg-blue-700">Scan</button>
+                </form>
+            </div>
         </div>
+
+        <!-- Live Logs Section -->
+        <div class="container mx-auto mt-8">
+            <div class="bg-white shadow-lg p-6 rounded-lg">
+                <h2 class="text-2xl font-semibold mb-2">📜 Live Scan Logs</h2>
+                <div id="live-logs" class="bg-gray-100 p-4 rounded max-h-64 overflow-auto border border-gray-300"></div>
+            </div>
+        </div>
+
+      <!-- Scan Results Section -->
+<div id="scan-results" class="container mx-auto mt-8 hidden">
+    <div class="bg-white shadow-lg p-6 rounded-lg">
+        <h2 class="text-3xl font-semibold mb-4">🔍 Scan Results</h2>
+
+        <button class="w-full text-left font-bold text-lg bg-gray-200 p-3 rounded-lg mb-2" onclick="toggleSection('open-ports')">📂 Open Ports (Click to Expand)</button>
+        <div id="open-ports" class="hidden bg-gray-100 p-4 rounded-lg max-h-64 overflow-auto"></div>
+
+        <button class="w-full text-left font-bold text-lg bg-gray-200 p-3 rounded-lg mb-2" onclick="toggleSection('security-headers')">🔒 Security Headers (Click to Expand)</button>
+        <div id="security-headers" class="hidden bg-gray-100 p-4 rounded-lg max-h-64 overflow-auto"></div>
+
+        <button class="w-full text-left font-bold text-lg bg-gray-200 p-3 rounded-lg mb-2" onclick="toggleSection('sensitive-files')">📁 Sensitive Files Found (Click to Expand)</button>
+        <div id="sensitive-files" class="hidden bg-gray-100 p-4 rounded-lg max-h-64 overflow-auto"></div>
     </div>
+</div>
 
-    <!-- Scan Results Section -->
-    <div id="scan-results" class="container mx-auto mt-8 hidden">
-        <div class="bg-white shadow-lg p-6 rounded-lg">
-            <h2 class="text-3xl font-semibold mb-4">🔍 Scan Results</h2>
-
-            <button class="w-full text-left font-bold text-lg bg-gray-200 p-3 rounded-lg mb-2" onclick="toggleSection('open-ports')">📂 Open Ports (Click to Expand)</button>
-            <div id="open-ports" class="hidden bg-gray-100 p-4 rounded-lg max-h-64 overflow-auto"></div>
-
-            <button class="w-full text-left font-bold text-lg bg-gray-200 p-3 rounded-lg mb-2" onclick="toggleSection('security-headers')">🔒 Security Headers (Click to Expand)</button>
-            <div id="security-headers" class="hidden bg-gray-100 p-4 rounded-lg max-h-64 overflow-auto"></div>
-
-            <button class="w-full text-left font-bold text-lg bg-gray-200 p-3 rounded-lg mb-2" onclick="toggleSection('sensitive-files')">📁 Sensitive Files (Click to Expand)</button>
-            <div id="sensitive-files" class="hidden bg-gray-100 p-4 rounded-lg max-h-64 overflow-auto"></div>
-        </div>
     </div>
 
     <!-- Footer -->
@@ -124,3 +316,4 @@
     </footer>
 </body>
 </html>
+
