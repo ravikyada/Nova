@@ -13,6 +13,9 @@ A **lightweight and efficient** security scanner written in **Golang** 🛡️, 
 ---
 
 <!-- GitAds-Verify: O63J1TV1329S68SYWMEFR9AGTXSHY9BF -->
+## GitAds Sponsored
+[![Sponsored by GitAds](https://gitads.dev/v1/ad-serve?source=ravikyada/nova@github)](https://gitads.dev/v1/ad-track?source=ravikyada/nova@github)
+
 
 ## 📦 Installation
 
