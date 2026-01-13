@@ -12,6 +12,8 @@ A **lightweight and efficient** security scanner written in **Golang** 🛡️, 
 
 ---
 
+<!-- GitAds-Verify: O63J1TV1329S68SYWMEFR9AGTXSHY9BF -->
+
 ## 📦 Installation
 
 ### Prerequisites
